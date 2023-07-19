@@ -18,7 +18,8 @@
 
 #ifdef GGML_USE_CUBLAS
 #include "ggml-cuda.h"
-#elif defined(GGML_USE_CLBLAST)
+#endif
+#if defined(GGML_USE_CLBLAST)
 #include "ggml-opencl.h"
 #endif
 
@@ -300,7 +301,7 @@ bool mpt_model_load(const std::string & fname, mpt_model & model, gpt_vocab & vo
         const auto & hparams = model.hparams;
         size_t vram_total = 0;
         const int n_gpu = std::min(gpulayers, int(hparams.n_layers));
-        fprintf(stderr, "%s: [opencl] offloading %d layers to GPU\n", __func__, n_gpu);
+        fprintf(stderr, "%s: [GPU] offloading %d layers to GPU\n", __func__, n_gpu);
         for (int i = 0; i < n_gpu; ++i) {
             const auto & layer = model.layers[i];
             layer.ffn_up_proj->backend = GGML_BACKEND_GPU;
@@ -319,7 +320,7 @@ bool mpt_model_load(const std::string & fname, mpt_model & model, gpt_vocab & vo
             ggml_cuda_transform_tensor(layer.c_attn_out_proj_weight->data,layer.c_attn_out_proj_weight); vram_total += ggml_nbytes(layer.c_attn_out_proj_weight);
             #endif
         }
-        fprintf(stderr, "%s: [opencl] total VRAM used: %zu MB\n", __func__, vram_total / 1024 / 1024);
+        fprintf(stderr, "%s: [GPU] total VRAM used: %zu MB\n", __func__, vram_total / 1024 / 1024);
     }
     #endif
 
@@ -382,7 +383,6 @@ bool mpt_eval(const mpt_model & model, const int n_threads, const int n_past,
 
     struct ggml_context * ctx0 = ggml_init(params);
     struct ggml_cgraph gf = {};
-    gf.n_threads = n_threads;
 
     struct ggml_tensor * embd = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, N);
     memcpy(embd->data, embd_inp.data(), N * ggml_element_size(embd));
@@ -542,7 +542,7 @@ bool mpt_eval(const mpt_model & model, const int n_threads, const int n_past,
 
     // run the computation
     ggml_build_forward_expand(&gf, inpL);
-    ggml_graph_compute(ctx0, &gf);
+    kcpp_graph_compute_helper(&gf, n_threads);
 
     // std::cout << "Qcur" << std::endl;
     // print_tensor(Qcur);
