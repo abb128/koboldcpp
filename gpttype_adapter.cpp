@@ -771,6 +771,45 @@ const std::string & gpttype_get_pending_output()
     return concat_output;
 }
 
+
+#define SPECIAL_BOS_TOKEN "<|SPECIAL_BOS_TOKEN|>"
+#define SPECIAL_EOS_TOKEN "<|SPECIAL_EOS_TOKEN|>"
+
+void processPromptWithSpecial(std::string input, std::vector<int> &embd_inp) {
+  int start = 0;
+
+  while(start < input.length()) {
+    int end = input.length();
+    
+    int next_tag1 = input.find(SPECIAL_BOS_TOKEN, start);
+    if(next_tag1 != std::string::npos) {
+        int ne1 = (next_tag1 == start) ? (next_tag1 + sizeof(SPECIAL_BOS_TOKEN) - 1) : next_tag1;
+        if(ne1 < end) end = ne1;
+    }
+    
+    int next_tag2 = input.find(SPECIAL_EOS_TOKEN, start);
+    if(next_tag2 != std::string::npos) {
+        int ne2 = (next_tag2 == start) ? (next_tag2 + sizeof(SPECIAL_EOS_TOKEN) - 1) : next_tag2;
+        if(ne2 < end) end = ne2;
+    }
+
+    std::string part = input.substr(start, end - start);
+
+    std::vector<int> partial;
+    if(part == SPECIAL_BOS_TOKEN) {
+        embd_inp.push_back(llama_token_bos());
+    } else if (part == SPECIAL_EOS_TOKEN) {
+        embd_inp.push_back(llama_token_eos());
+    } else if (!part.empty()) {
+        partial = ::llama_tokenize(llama_ctx_v3, part, false);
+        for(int i : partial) {
+            embd_inp.push_back(i);
+        }
+    }
+    start = end;
+  }
+}
+
 generation_outputs gpttype_generate(const generation_inputs inputs, generation_outputs &output)
 {
     stop_sequence.clear();
@@ -819,26 +858,34 @@ generation_outputs gpttype_generate(const generation_inputs inputs, generation_o
     // tokenize the prompt
     std::vector<int> embd_inp;
 
-    if (file_format == FileFormat::GGML || file_format == FileFormat::GGHF || file_format == FileFormat::GGJT || file_format == FileFormat::GGJT_2  || file_format == FileFormat::GGJT_3)
-    {
-        params.prompt.insert(0, 1, ' ');
-        if(file_format == FileFormat::GGHF || file_format == FileFormat::GGJT || file_format == FileFormat::GGJT_2 )
+    std::string prompt = params.prompt;
+
+    if(prompt.find(SPECIAL_BOS_TOKEN) == std::string::npos) {
+        if (file_format == FileFormat::GGML || file_format == FileFormat::GGHF || file_format == FileFormat::GGJT || file_format == FileFormat::GGJT_2  || file_format == FileFormat::GGJT_3)
         {
-            embd_inp = ::llama_v2_tokenize(llama_ctx_v2, params.prompt, true);
-        }
-        else if (file_format == FileFormat::GGML)
-        {
-            embd_inp = ::legacy_llama_v2_tokenize(llama_ctx_v2, params.prompt, true);
+            params.prompt.insert(0, 1, ' ');
+            if(file_format == FileFormat::GGHF || file_format == FileFormat::GGJT || file_format == FileFormat::GGJT_2 )
+            {
+                embd_inp = ::llama_v2_tokenize(llama_ctx_v2, params.prompt, true);
+            }
+            else if (file_format == FileFormat::GGML)
+            {
+                embd_inp = ::legacy_llama_v2_tokenize(llama_ctx_v2, params.prompt, true);
+            }
+            else
+            {
+                embd_inp = ::llama_tokenize(llama_ctx_v3, params.prompt, true);
+            }
         }
         else
         {
-            embd_inp = ::llama_tokenize(llama_ctx_v3, params.prompt, true);
+            // tokenize the prompt
+            embd_inp = ::gpt_tokenize(vocab, params.prompt);
         }
-    }
-    else
-    {
-        // tokenize the prompt
-        embd_inp = ::gpt_tokenize(vocab, params.prompt);
+        unbanTokens = false;
+    } else {
+        processPromptWithSpecial(prompt, embd_inp);
+        unbanTokens = true;
     }
 
     //truncate to front of the prompt if its too long
